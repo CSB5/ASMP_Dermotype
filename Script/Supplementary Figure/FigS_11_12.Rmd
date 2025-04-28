@@ -1,0 +1,599 @@
+---
+title: "plot_da_network"
+output: html_document
+date: '2023-11-20'
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(ggh4x)
+library(dplyr)
+library(openxlsx)
+library(tidyr)
+library(igraph)
+wb <- loadWorkbook("~/ASMP_Dermotype/Data/3_assoc_diff/co_occurence_result.xlsx")
+load("~/ASMP_Dermotype/Data/3_assoc_diff/net_derm_ax.RData")
+load("~/ASMP_Dermotype/Data/3_assoc_diff/all_networks_noax_29nov.RData")
+source('~/ASMP_Dermotype/Script/Analysis/utils_network_asmp.R')
+```
+
+```{r}
+sheet_names <- names(wb)
+df_list <- lapply(sheet_names, function(sheet) {
+  read.xlsx(wb, sheet = sheet)
+})
+names(df_list) <- sheet_names
+df_list <- lapply(df_list, function(df) {
+  colnames(df) <- c("Taxa1", "Taxa2", "Cor1", "Cor2", "Padj")
+  df
+})
+
+assoMat_ac<- data.frame(df_list$Ac_CCREPE)
+assoMat_vf<- data.frame(df_list$Vf_CCREPE)
+assoMat_ub<- data.frame(df_list$Ub_CCREPE)
+assoMat_fo<- data.frame(df_list$Fo_CCREPE)
+assoMat_ps<- data.frame(df_list$Ps_CCREPE)
+assoMat_sc<- data.frame(df_list$Sc_CCREPE)
+assoMat_ax<- data.frame(df_list$Ax_CCREPE)
+
+combined_network <- rbind(assoMat_ac %>% mutate(Site = 'Ac'),
+                          assoMat_vf %>% mutate(Site = 'Vf'),
+                          
+                          assoMat_ub %>% mutate(Site = 'Ub'),
+                          assoMat_fo %>% mutate(Site = 'Fo'),
+                          
+                          assoMat_ps %>% mutate(Site = 'Ps'),
+                          assoMat_sc %>% mutate(Site = 'Sc'),
+                          assoMat_ax %>% mutate(Site = 'Ax'))
+
+ oral <- c('S. mitis oralis pneumoniae', 'S. salivarius', 'R. dentocariosa',
+           'V. parvula', 'C. matruchotii', 'R. aeria', 'C. durum',
+           'A. viscosus', 'R. mucilaginosa', 'P. melaninogenica',
+           'S. sanguinis', "N. flavescens", "A. massiliensis")
+ corynebact <- c('C. tuberculostearicum', 'C. pseudogenitalium',
+                 'C. kroppenstedtii', 'C. accolens', 'C. jeikeium', 'C. durum', 'C. matruchotii')
+ staph <- c('S. hominis', 'S. epidermidis', 'S. haemolyticus', 'S. saprophyticus',
+            'S. caprae capitis')
+ cuti <- c('C. acnes', 'C. avidum', 'C. granulosum')
+ malass <- c('M. restricta', 'M. furfur', 'M. globosa', 'M. japonica', 'M. dermatis', 'M. sloofiae')
+ strep <- c('S. mitis oralis pneumoniae', 'S. salivarius', 'S. sanguinis')
+ rothia <- c('R. dentocariosa','R. aeria','R. mucilaginosa')
+ microco <- c('M. luteus')
+ morax <- c('M. osloensis')
+
+ common_skin <- 'Corynebacterium\nStaphylococcus\nMalassezia'
+ oral_skin <- 'Streptococcus\nRothia\nCorynebacterium\nPrevotella\nActinomyces\nVeilonella'
+
+# add category for better visualization
+combined_network <- combined_network %>%
+  mutate(Category = case_when((Taxa1 %in% oral) & (Taxa2 %in% oral)~ oral_skin,
+                           grepl('acnes', Taxa1) ~ 'C. acnes',
+                           grepl('acnes', Taxa2) ~ 'C. acnes',
+                           (Taxa1 %in% c(corynebact, staph, malass, microco, morax)) &
+                           (Taxa2 %in% c(corynebact, staph, malass, microco, morax)) ~ common_skin,
+                           TRUE ~ 'Others'))
+p_filt <- 0.1
+combined_network_filt <- combined_network %>% 
+    tidyr::unite(Interaction, c("Taxa1", "Taxa2"), sep = '-') %>% 
+    #mutate(Interaction = rearrange_names(Interaction)) %>% 
+  filter(Padj <p_filt) %>% 
+  dplyr::select(-Padj)
+```
+
+# check the number of unique nodes and edges in each networks 
+```{r}
+network_node_sum <- combined_network %>% 
+  select(Site, Taxa1, Taxa2) %>% 
+  reshape2::melt(id = "Site") %>% 
+  group_by(Site) %>% 
+  summarize(n_node = n_distinct(value))
+
+network_edge_sum <- combined_network %>% 
+  group_by(Site) %>% 
+  summarise(n_edge_1 = sum(Cor1 != 0), 
+            n_edge_2 = sum(Cor2 != 0)) %>% 
+  reshape2::melt(id = "Site")
+```
+
+# check the proportion of shared edges 
+
+```{r}
+combined_network  <-  combined_network %>%
+  mutate(Group = 
+         case_when(
+                  Cor1*Cor2 > 0 & Padj <=p_filt ~ "Strength_variant", 
+                  Cor1*Cor2 < 0 & Padj <=p_filt~ "Reverse", 
+                  Cor1*Cor2 == 0 & Padj <=p_filt ~ "Exclusive", 
+                  Padj >p_filt ~ "Non-differential",
+                  T ~ NA))
+df_diff_prop <-  combined_network %>% 
+  group_by(Site) %>%
+  dplyr::summarize(
+          Total = n(),
+          Reverse_n = sum(Group == "Reverse"), 
+          Strength_variant_n = sum(Group == "Strength_variant"), 
+          Exclusive_n = sum (Group == "Exclusive"), 
+          Differential_n = sum(Group %in% c("Reverse", "Strength_variant", "Exclusive"))) %>% 
+  mutate(Site = factor(Site, levels = c("Ax", "Ac", "Vf", "Ub", "Fo", "Ps", "Sc"))) %>% 
+  mutate(Site_n = paste(Site, "\n(n = ", Total, ")", sep = ""),
+         Differential = Differential_n /Total,
+         Non_Differential = 1-Differential_n /Total, 
+         Reverse = Reverse_n / Differential_n,
+         Strength_variant = Strength_variant_n  / Differential_n,
+         Exclusive = Exclusive_n / Differential_n) %>% 
+  arrange(Site)
+
+order <- df_diff_prop$Site_n
+
+
+p <- df_diff_prop %>% 
+  select(Site_n, Non_Differential, Differential) %>%  
+  reshape2::melt() %>%
+  data.frame() %>%
+  mutate(Site_n = forcats::fct_relevel(Site_n, order)) %>%
+  ggplot(., aes(fill = variable, y= value, x= Site_n)) + 
+      geom_bar(position="fill", stat="identity") +
+  scale_fill_manual(values = c("grey", "maroon")) +
+  scale_y_continuous(labels = scales::percent) +
+  ggpubr::theme_pubr(base_size = 7) +
+  theme(legend.title = element_blank(),
+        legend.position = "top",
+        axis.title = element_blank())
+p
+```
+
+
+# Check which differential edges are between core species 
+
+```{r}
+diff_edge_delta <- combined_network  %>% 
+  filter(Padj < p_filt) %>% 
+  mutate(delta = abs(Cor1-Cor2)) %>% 
+  #group_by(Site) %>% 
+  arrange(Site, desc(delta))
+diff_edge_delta_list <- split (diff_edge_delta, diff_edge_delta$Site)
+
+
+# load core species previously identified for each site and dermotype 
+load("~/ASMP_Dermotype/Data/2_basic/HighPrev_site.RData")
+d_all_site <- d_all %>% dplyr::rename(Category = Site)
+load("~/ASMP_Dermotype/Data/2_basic/HighPrev_Dermotype.RData")
+d_all_dermotype <- d_all %>% 
+  dplyr::rename(Category = Dermotype)
+d_Category <- rbind(d_all_site, d_all_dermotype) %>% 
+  mutate(Taxa_short = gsub("^s__", "", Taxa_og)) %>% 
+  mutate(Taxa_short = gsub("^([A-Za-z])[^_]+_", "\\1. ",  Taxa_short)) %>% 
+  mutate(Taxa_short = gsub("_", " ", Taxa_short)) %>% 
+  mutate(Site = gsub("\\-.*", "", Category))
+core_species_list <- split(d_Category, d_Category$Site)
+
+core_species_edge_list <- list()
+for (i in unique(names(diff_edge_delta_list))) {
+  core_species_df <- core_species_list[[i]] %>% data.frame()
+  edge_df <- diff_edge_delta_list[[i]] %>% data.frame() %>% 
+    mutate(edge_btw_core_species = case_when(Taxa1 %in% core_species_df$Taxa_short &
+                                             Taxa2 %in% core_species_df$Taxa_short ~ "Y",
+           T ~ "N"))
+  core_species_edge_list[[i]] <- edge_df
+}
+
+all_edges <- do.call(rbind, core_species_edge_list) 
+table(all_edges$edge_btw_core_species)
+```
+
+# visualize the proportion of differential edges that are between core species for each skin site (the number of diff edges between 2 core species / the total number of diff edges)
+
+```{r}
+core_edge_prop <- all_edges %>% 
+  group_by(Site) %>% 
+  summarize(core_edge_n = sum (edge_btw_core_species == "Y"),
+         diff_edge_n = n(), 
+         diff_edge_btw_core = core_edge_n / diff_edge_n, 
+         diff_edge_btw_non_core = 1- core_edge_n / diff_edge_n) %>% 
+  ungroup() %>% 
+  distinct(Site, diff_edge_btw_core, diff_edge_btw_non_core) %>% 
+  reshape2::melt() %>%
+  data.frame() 
+
+order3  <- df_diff_prop$Site
+
+p_core_edge_prop <- core_edge_prop %>%
+  mutate(Site = forcats::fct_relevel(Site, as.character(order3)),
+         variable = forcats::fct_relevel(variable, 
+                                c("diff_edge_btw_non_core", "diff_edge_btw_core"))) %>% 
+  ggplot(., aes(fill = variable, y= value, x= Site)) + 
+  geom_bar(position="fill", stat="identity") +
+  scale_fill_manual(values = c( "#676765", "#FFB902")) +
+  scale_y_continuous(labels = scales::percent) +
+  ggpubr::theme_pubr(base_size = 7, legend = "top") +
+  theme(legend.title = element_blank(),
+        axis.title = element_blank())
+p_core_edge_prop 
+```
+
+
+# visualize the top 5 most different core species edges for each site 
+
+```{r}
+core_species_edge <- all_edges %>% 
+  filter(edge_btw_core_species == "Y") %>% 
+  arrange(Site, desc(delta)) %>% 
+  mutate(core_species_pair = paste(Taxa1, Taxa2, sep = "-")) 
+
+core_species_edge_top5 <- core_species_edge %>%
+  arrange(Site, desc(delta)) %>%
+  group_by(Site) %>%
+  slice_head(n = 5) %>% 
+  mutate(Rank = rank(-delta, ties.method = "min")) %>% 
+  ungroup() %>%
+  tidyr::gather(key = "Correlation_Type", value = "Correlation", Cor1, Cor2) %>%
+  mutate(Correlation_Type = factor(Correlation_Type, levels = c("Cor1", "Cor2", "delta")))
+
+core_species_edge_top5_group <- core_species_edge_top5 %>%
+  group_by(core_species_pair) %>% 
+  summarise(ave_rank = mean(Rank, na.rm = T),
+            total_times = n()) %>% 
+  arrange(desc(total_times), ave_rank)
+
+
+core_species_edge_top5 <- core_species_edge_top5 %>% 
+  mutate(core_species_pair = factor(core_species_pair, 
+                            levels = core_species_edge_top5_group$core_species_pair)) %>% 
+  mutate(Site = factor(Site, levels = c("Ax", "Ac", "Vf", "Ub", "Fo", "Sc")))
+
+p_top5_core_species_edge <- ggplot(core_species_edge_top5, 
+                                   aes(x = Correlation_Type, y = core_species_pair)) +
+  geom_tile(aes(fill = Correlation), color = "white") +
+  scale_fill_gradient2(low = "orange", mid = "white", high = "purple", name = "Correlation") +
+  scale_y_discrete(limits=rev) + 
+  facet_grid(~ Site) +  
+  ggpubr::theme_pubr(base_size = 12, x.text.angle = 30, border = T) +
+  theme(axis.title = element_blank(), 
+        legend.position = "left", 
+        legend.direction = "vertical", 
+        axis.text.y = element_text(face = "italic"))
+p_top5_core_species_edge 
+```
+
+
+## VF
+```{r}
+attr_vf_1 <- generate_nodes_edges(assoMat_vf, 'Cor1')
+sub.g.vf.1 <- modif_graph(attr_vf_1)
+
+attr_vf_2 <- generate_nodes_edges(assoMat_vf, 'Cor2')
+sub.g.vf.2 <- modif_graph(attr_vf_2)
+
+# #----------find the proper coordinates -----------#
+# set.seed(1)
+# tkplot(sub.g.vf.1,
+#      edge.width = E(sub.g.vf.1)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.vf.1),
+#      #layout = coords,
+#      vertex.size = set_nodesize(net_derm_vf$normCounts1, sub.g.vf.1),
+#      vertex.shape = ifelse(V(sub.g.vf.1)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.1,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # 
+# tkplot(sub.g.vf.2,
+#      edge.width = E(sub.g.vf.2)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.vf.2),
+#      layout = coords,
+#      vertex.size = set_nodesize(net_derm_vf$normCounts2, sub.g.vf.2),
+#      vertex.shape = ifelse(V(sub.g.vf.2)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.2,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # 
+# # coords <- tk_coords(24)
+# # write_tsv(data.frame(coords), './assoc_diff/vf_coords.tsv')
+
+
+#--------plot them------------#
+coords <- read_tsv('./assoc_diff/vf_coords.tsv') %>% as.matrix()
+svg(file="./vf-network.svg", width=16, height=7)
+par(mfrow=c(1,2), mar=c(0,0,0,1))
+plot(sub.g.vf.1,
+     edge.width = E(sub.g.vf.1)$weight,
+     # layout = layout.fruchterman.reingold(sub.g.vf.1),
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_vf$normCounts1, sub.g.vf.1),
+     vertex.shape = ifelse(V(sub.g.vf.1)$label %in% oral, "square", "circle"),
+     vertex.label.dist=1.1,
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black"
+     )
+
+plot(sub.g.vf.2, 
+     edge.width = E(sub.g.vf.2)$weight,
+     # layout = layout.fruchterman.reingold(sub.g.vf.2),
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_vf$normCounts2, sub.g.vf.2),
+     vertex.shape = ifelse(V(sub.g.vf.1)$label %in% oral, "square", "circle"), 
+     vertex.label.dist=1.1, 
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black",
+     )
+dev.off()
+```
+
+
+## UB
+
+```{r}
+attr_ub_1 <- generate_nodes_edges(assoMat_ub, 'Cor1')
+sub.g.ub.1 <- modif_graph(attr_ub_1)
+
+attr_ub_2 <- generate_nodes_edges(assoMat_ub, 'Cor2')
+sub.g.ub.2 <- modif_graph(attr_ub_2)
+
+# # #----------find the proper coordinates -----------#
+# set.seed(1)
+# tkplot(sub.g.ub.1,
+#      edge.width = E(sub.g.ub.1)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.ub.1),
+#      layout = coords,
+#      vertex.size = set_nodesize(net_derm_ub$normCounts1, sub.g.ub.1),
+#      vertex.shape = ifelse(V(sub.g.ub.1)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.1,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # # 
+# tkplot(sub.g.ub.2,
+#      edge.width = E(sub.g.ub.2)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.ub.2),
+#      layout = coords,
+#      vertex.size = set_nodesize(net_derm_ub$normCounts2, sub.g.ub.2),
+#      vertex.shape = ifelse(V(sub.g.ub.2)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.1,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # # 
+# coords <- tk_coords(12)
+# write_tsv(data.frame(coords), './assoc_diff/ub_coords.tsv')
+#--------plot them------------#
+coords <- read_tsv('./assoc_diff/ub_coords.tsv') %>% as.matrix()
+svg(file="./ub-network.svg", width=16, height=7)
+par(mfrow=c(1,2), mar=c(0,0,1,0))
+plot(sub.g.ub.1,
+     edge.width = E(sub.g.ub.1)$weight,
+     # layout = layout.fruchterman.reingold(sub.g.ub.1),
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_ub$normCounts1, sub.g.ub.1),
+     vertex.shape = ifelse(V(sub.g.ub.1)$label %in% oral, "square", "circle"),
+     vertex.label.dist=1.1,
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black",
+     main = "Ub-1"
+     )
+
+plot(sub.g.ub.2, 
+     edge.width = E(sub.g.ub.2)$weight,
+     # layout = layout.fruchterman.reingold(sub.g.ub.2),
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_ub$normCounts2, sub.g.ub.2),
+     vertex.shape = ifelse(V(sub.g.ub.1)$label %in% oral, "square", "circle"), 
+     vertex.label.dist=1.1, 
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black",
+      main = "Ub-2"
+     )
+dev.off()
+```
+
+## FO
+```{r}
+attr_fo_1 <- generate_nodes_edges(assoMat_fo, 'Cor1')
+sub.g.fo.1 <- modif_graph(attr_fo_1)
+
+attr_fo_2 <- generate_nodes_edges(assoMat_fo, 'Cor2')
+sub.g.fo.2 <- modif_graph(attr_fo_2)
+
+# # #----------find the proper coordinates -----------#
+# set.seed(1)
+# tkplot(sub.g.fo.1,
+#      edge.width = E(sub.g.fo.1)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.fo.1),
+#      layout = coords,
+#      vertex.size = set_nodesize(net_derm_fo$normCounts1, sub.g.fo.1),
+#      vertex.shape = ifelse(V(sub.g.fo.1)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.1,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # # # 
+# tkplot(sub.g.fo.2,
+#      edge.width = E(sub.g.fo.2)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.fo.2),
+#      layout = coords,
+#      vertex.size = set_nodesize(net_derm_fo$normCounts2, sub.g.fo.2),
+#      vertex.shape = ifelse(V(sub.g.fo.2)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.1,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # # 
+#coords <- tk_coords(19)
+#write_tsv(data.frame(coords), './assoc_diff/fo_coords.tsv')
+#--------plot them------------#
+coords <- read_tsv('./assoc_diff/fo_coords.tsv') %>% as.matrix()
+svg(file="./fo-network.svg", width=16, height=6)
+par(mfrow=c(1,2), mar=c(0,0,1,0))
+plot(sub.g.fo.1,
+     edge.width = E(sub.g.fo.1)$weight,
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_fo$normCounts1, sub.g.fo.1),
+     vertex.shape = ifelse(V(sub.g.fo.1)$label %in% oral, "square", "circle"),
+     vertex.label.dist=1.1,
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black",
+     main = "Fo-1"
+     )
+
+plot(sub.g.fo.2, 
+     edge.width = E(sub.g.fo.2)$weight,
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_fo$normCounts2, sub.g.fo.2),
+     vertex.shape = ifelse(V(sub.g.fo.1)$label %in% oral, "square", "circle"), 
+     vertex.label.dist=1.1, 
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black",
+      main = "Fo-2"
+     )
+dev.off()
+
+```
+
+## SC
+```{r}
+attr_sc_1 <- generate_nodes_edges(assoMat_sc, 'Cor1')
+sub.g.sc.1 <- modif_graph(attr_sc_1)
+
+attr_sc_2 <- generate_nodes_edges(assoMat_sc, 'Cor2')
+sub.g.sc.2 <- modif_graph(attr_sc_2)
+
+# # # #----------find the proper coordinates -----------#
+# set.seed(1)
+# tkplot(sub.g.sc.1,
+#      edge.width = E(sub.g.sc.1)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.sc.1),
+#      layout = coords,
+#      vertex.size = set_nodesize(net_derm_sc$normCounts1, sub.g.sc.1),
+#      vertex.shape = ifelse(V(sub.g.sc.1)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.1,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # # # # 
+# tkplot(sub.g.sc.2,
+#      edge.width = E(sub.g.sc.2)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.sc.2),
+#      layout = coords,
+#      vertex.size = set_nodesize(net_derm_sc$normCounts2, sub.g.sc.2),
+#      vertex.shape = ifelse(V(sub.g.sc.2)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.1,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # # # 
+# coords <- tk_coords(24)
+# write_tsv(data.frame(coords), './assoc_diff/sc_coords.tsv')
+#--------plot them------------#
+coords <- read_tsv('./assoc_diff/sc_coords.tsv') %>% as.matrix()
+svg(file="./sc-network.svg", width= 10, height= 4)
+par(mfrow=c(1,2), mar=c(0,0,1,1))
+plot(sub.g.sc.1,
+     edge.width = E(sub.g.sc.1)$weight,
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_sc$normCounts1, sub.g.sc.1),
+     vertex.shape = ifelse(V(sub.g.sc.1)$label %in% oral, "square", "circle"),
+     vertex.label.dist=1.1,
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black",
+     main = "Sc-1"
+     )
+
+plot(sub.g.sc.2, 
+     edge.width = E(sub.g.sc.2)$weight,
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_sc$normCounts2, sub.g.sc.2),
+     vertex.shape = ifelse(V(sub.g.sc.1)$label %in% oral, "square", "circle"), 
+     vertex.label.dist=1.1, 
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black",
+      main = "Sc-2"
+     )
+dev.off()
+```
+
+## AX
+```{r}
+attr_ax_1 <- generate_nodes_edges(assoMat_ax, 'Cor1')
+sub.g.ax.1 <- modif_graph(attr_ax_1)
+
+attr_ax_2 <- generate_nodes_edges(assoMat_ax, 'Cor2')
+sub.g.ax.2 <- modif_graph(attr_ax_2)
+
+# # #----------find the proper coordinates -----------#
+# set.seed(1)
+# tkplot(sub.g.ax.1,
+#      edge.width = E(sub.g.ax.1)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.ax.1),
+#      layout = coords,
+#      vertex.size = set_nodesize(net_derm_ax$normCounts1, sub.g.ax.1),
+#      vertex.shape = ifelse(V(sub.g.ax.1)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.1,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # # 
+# tkplot(sub.g.ax.2,
+#      edge.width = E(sub.g.ax.2)$weight,
+#      #layout = layout.fruchterman.reingold(sub.g.ax.2),
+#      #layout = coords,
+#      vertex.size = set_nodesize(net_derm_ax$normCounts2, sub.g.ax.2),
+#      vertex.shape = ifelse(V(sub.g.ax.2)$label %in% oral, "square", "circle"),
+#      vertex.label.dist=1.2,
+#      vertex.label.degree = 1.52*pi,
+#      vertex.label.font = 3,
+#      vertex.label.color = "black")
+# # # 
+# coords <- tk_coords(29)
+# write_tsv(data.frame(coords), './assoc_diff/ax_coords.tsv')
+
+#--------plot them------------#
+coords <- read_tsv('./assoc_diff/ax_coords.tsv') %>% as.matrix()
+svg(file="./ax-network.svg", width= 10, height=4)
+par(mfrow=c(1,2), mar=c(0,0,1,0))
+plot(sub.g.ax.2, 
+     edge.width = E(sub.g.ax.2)$weight,
+     # layout = layout.fruchterman.reingold(sub.g.ax.2),
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_ax$normCounts2, sub.g.ax.2),
+     vertex.shape = ifelse(V(sub.g.ax.1)$label %in% oral, "square", "circle"), 
+     vertex.label.dist=1.1, 
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black",
+     main = "Ax-2"
+     
+     )
+plot(sub.g.ax.1,
+     edge.width = E(sub.g.ax.1)$weight,
+     # layout = layout.fruchterman.reingold(sub.g.ax.1),
+     layout = coords,
+     vertex.size = set_nodesize(net_derm_ax$normCounts1, sub.g.ax.1),
+     vertex.shape = ifelse(V(sub.g.ax.1)$label %in% oral, "square", "circle"),
+     vertex.label.dist=1.1,
+     vertex.label.cex = 1.4,
+     vertex.label.degree = 1.52*pi,
+     vertex.label.font = 3,
+     vertex.label.color = "black",
+     main = "Ax-5"
+     )
+dev.off()
+```
+
