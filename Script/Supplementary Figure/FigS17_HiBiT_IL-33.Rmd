@@ -1,0 +1,171 @@
+---
+title: "IL33_HiBiT"
+author: "Li Chengchen (Cherry)"
+date: "2025-04-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(ggbreak)
+library(rstatix)
+library(dplyr)
+library(forcats)
+```
+
+# HiBiT IL-33  
+
+- Genetically modified N/TERT keratinocyte cell lines were utilized for Nano-Glo HiBiT experiments. This N/TERT cell lines contained a 33 nucleotide HiBiT tag directly adjacent to the IL1B and IL33 genes. 
+
+```{r}
+il33 <- readxl::read_excel(
+  "~/ASMP_Dermotype/Data/5_experiment/IL-33_HiBiT_from_Stephen.xlsx", 
+  sheet = 1)
+names(il33) <- c("strain", "Rep 1", "Rep 2", "Rep 3", "runs") 
+il33_tmp <- il33 %>% 
+  pivot_longer(cols= c("Rep 1", "Rep 2", "Rep 3"), 
+               names_to = "id", 
+               values_to = "IL33") %>% 
+  mutate(runs = as.character(runs))
+```
+
+- calculate the relative fold change in luminescence measurements using the reference group (treated with BHI only)
+
+```{r cars}
+il33_norm <- il33_tmp %>%
+  filter(strain == "Untreated") %>%
+  select(id, runs, IL33_Untreated = IL33) %>%
+  right_join(il33_tmp, by = c("id", "runs")) %>%
+  mutate(IL33_normalized = IL33 / IL33_Untreated) %>% 
+  select(-IL33) %>% 
+  rename(., c("IL33" = "IL33_normalized")) %>% 
+  mutate(
+         strain1 = strain) %>% 
+  separate(strain1, into = c("C1", "C2", "C3", "C4", "C5"), sep = " ") %>% 
+  mutate(species = C2) %>% 
+  mutate(species = case_when(is.na(species) ~ "Untreated", 
+                             str_detect(species, "SH") ~ "S. hominis",
+                             str_detect(species, "SE") ~ "S. epidermidis",
+                             str_detect(species, "Mluteus") ~ "M. luteus",
+                             
+                             # str_detect(species, "war") ~ "S. warneri", 
+                             # str_detect(species, "cap") ~ "S. capitis", 
+                             T~species)) %>% 
+  mutate(species = factor(species, levels = c("Untreated","TritonX", "BHI",  "M. luteus",  "S. hominis", "S. epidermidis"))) %>% 
+  group_by(strain, runs) %>% 
+  mutate(ave_IL33 = mean(IL33, na.rm = T)) %>% 
+  ungroup() 
+#%>% filter(strain != "5% SE 09-81 (S4, AX) Supernatant")
+```
+
+```{r, echo=FALSE}
+results <- il33_norm %>%
+  wilcox_test(IL33 ~ strain, ref.group = "5% BHI"
+              , alternative = "less"
+              ) %>% 
+  adjust_pvalue(method = "BH") %>% 
+  add_significance()
+
+annotation_data <- il33_norm %>%
+  distinct(species, strain ) %>%       # Get unique species-group combinations
+  left_join(results, join_by("strain" == "group2"))   # Attach p-values
+
+
+y_pos <- il33_norm %>%
+  group_by(species) %>%
+  summarise(y_pos = max(IL33, na.rm = TRUE)*1.01) %>%
+  ungroup() %>% 
+  left_join(annotation_data, by = c("species"))
+
+# Reorder `strain` within each `species` by median IL33
+strain_order <- il33_norm %>%
+  group_by(species, strain) %>%
+  summarise(median_IL33 = median(IL33, na.rm = TRUE), .groups = "drop") %>%
+  arrange(species, median_IL33) %>%
+  group_by(species) %>%
+  mutate(strain_ordered = factor(strain, levels = unique(strain)))
+
+il33_norm <- il33_norm %>%
+  left_join(strain_order[, c("species", "strain", "strain_ordered")], by = c("species", "strain"))
+```
+
+
+## visualization and statistical test between each isolate (averaged technical replicates)
+
+```{r, echo=FALSE}
+ave_il33_norm <- il33_norm %>%
+  distinct(species, strain, runs, ave_IL33)
+
+results <- ave_il33_norm %>%
+  distinct(species, strain, runs, ave_IL33) %>% 
+  mutate(stat_group = case_when(species %in% c("M. luteus", "BHI") ~ "Ref", 
+        T~strain)) %>% 
+  wilcox_test(ave_IL33 ~ stat_group, ref.group = "Ref"
+              , alternative = "less"
+              ) %>% 
+  adjust_pvalue(method = "BH") %>% 
+  add_significance(
+      cutpoints = c(0, 1e-04, 0.001, 0.01, 0.05, 1),
+      symbols = c("****", "***", "**", "*", "")
+  )
+
+
+annotation_data <- ave_il33_norm %>%
+  distinct(species, strain ) %>%       # Get unique species-group combinations
+  left_join(results, join_by("strain" == "group2")) %>% 
+  filter(strain!="Untreated") # Attach p-values
+
+
+y_pos <- ave_il33_norm %>%
+  filter(strain!="Untreated") %>% 
+  group_by(species) %>%
+  summarise(y_pos = max(ave_IL33, na.rm = TRUE)*1.01) %>%
+  ungroup() %>% 
+  left_join(annotation_data, by = c("species")) 
+
+# Reorder `strain` within each `species` by median IL33
+strain_order <- ave_il33_norm %>%
+  filter(strain!="Untreated") %>% 
+  group_by(species, strain) %>%
+  summarise(median_ave_IL33 = median(ave_IL33, na.rm = TRUE), .groups = "drop") %>%
+  arrange(species, median_ave_IL33) %>%
+  group_by(species) %>%
+  mutate(strain_ordered = factor(strain, levels = unique(strain)))
+
+ave_il33_norm <- ave_il33_norm %>%
+  left_join(strain_order[, c("species", "strain", "strain_ordered")], by = c("species", "strain"))
+
+# Now plot using the reordered `strain_ordered`
+p1 <- ave_il33_norm %>% 
+  filter(strain!="Untreated") %>% 
+  ggplot(aes(x = strain_ordered, y = ave_IL33)) +
+  geom_boxplot(outliers = FALSE) +
+  geom_jitter(width = 0.2, alpha = 0.7) +
+  facet_grid(~species, scales = "free_x", space = "free_x",  labeller = label_wrap_gen(width = 2)) +
+  ggpubr::theme_pubr(x.text.angle = 45) +
+  geom_text(
+    data = y_pos,
+    aes(x = strain, y = y_pos, label = p.adj.signif),
+    vjust = -0.5, size = 5, color = "red"
+  ) +
+  labs(x = "", y = "pro-IL-33 relative light units ") +
+  coord_cartesian(ylim = c(0, max(il33_norm$ave_IL33, na.rm = TRUE) * 1.15))
+
+p1
+```
+
+```{r, exclude = F}
+p1 <- p1 +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x.bottom = element_blank(),
+    axis.text.y.right = element_blank(),
+    strip.text = element_text(face = c("bold.italic"), size = 7)
+  )
+p1
+```
+
+

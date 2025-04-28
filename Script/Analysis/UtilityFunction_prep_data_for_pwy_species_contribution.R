@@ -51,7 +51,7 @@ pwy_contri_by_group <- function(i, # skin site of interest
    # 
   #----2. to plot contribution by each species-------#
   #-----2.0 read in kitome species -----#
-  kitome <- readxl::read_excel("~/Desktop/ASMP/Output/1_kitome/Kitome.xlsx")
+  kitome <- readxl::read_excel("./Data/Kitome.xlsx")
   metadata_input <- mdata.dermotype.conf %>% filter(LibraryID %in% library_list)
   unique_ID <- "LibraryID"
   group <- "Dermotype_size"

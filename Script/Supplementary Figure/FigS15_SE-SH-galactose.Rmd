@@ -1,0 +1,162 @@
+---
+title: "FigS16_SE-SH_galactose"
+author: "Li Chengchen (Cherry)"
+date: "2025-04-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(growthcurver)
+library(ggplot2)
+library(stringr)
+library(ggpubr)
+library(RColorBrewer)
+library(lubridate)
+```
+
+# Growth curvey analysis 
+
+## Extract OD readings 
+
+```{r }
+file <- list() 
+file[["galactose"]] <- "~/ASMP_Dermotype/Data/5_experiment/co-culture BHI Gal5 02042025 data.csv"
+
+r <- read.csv(file[["galactose"]], header = T) %>% 
+  data.frame() %>% 
+  select(-X) %>% 
+  filter(!(Label %in% c("Info", "Time"))) %>% 
+  reshape2::melt() 
+
+names(r) <- c("Time", "group", "OD")
+tmp_summary <- r %>% 
+  mutate(Time = period_to_seconds(hms(Time)) / 3600) %>% 
+  mutate(group = gsub("(?<=[A-Za-z])\\..\\d+", "", group, perl = TRUE)) %>% 
+  mutate(group = gsub("(?<=[A-Za-z])\\.\\d+", "", group, perl = TRUE)) %>% 
+  mutate(group = gsub("...S", "_S", group)) %>% 
+  mutate(group = gsub("BHI.", "BHI-", group)) %>% 
+  mutate(group = gsub("SE.SH", "SESH", group)) %>% 
+  mutate(group = gsub("BHI-S", "BHI_S", group)) %>% 
+  mutate(group = gsub("BLANK..", "BLANK-", group)) %>% 
+  mutate(group = gsub("BLANK-BHI-", "BLANK-BHI", group)) %>%
+  mutate(group = gsub("BLANK-BHIGAL.", "BLANK-BHIGAL", group)) %>%
+  group_by(Time, group) %>% 
+  summarize(Mean_OD = mean(OD), 
+            SO_OD = sd(OD)) %>% 
+  mutate(group2 = group) %>% 
+  separate(group2, into = c("supplement", "bacteria"), sep = "_") %>% 
+  mutate(supplement = gsub("BLANK", "Blank", supplement),
+         supplement = gsub("BHIGAL", "BHI-GAL", supplement)) %>% 
+  mutate(supplement = factor(supplement, levels = c("Blank-BHI",
+                                                    "Blank-BHI-GAL",
+                                                    "BHI",
+                                                    "BHI-GAL"
+                                                       ))) %>% 
+  mutate(supp = case_when(
+    str_detect(supplement, "GAL") ~ "BHI+galactose", 
+                T~ "BHI")) %>% 
+  mutate(bacteria = case_when(bacteria == "SE" ~ "S. epidermidis",
+                              bacteria == "SH" ~ "S. hominis",
+                              bacteria == "SESH" ~ "co-culture",
+                              T ~ "Blank")) %>% 
+  mutate(bacteria = factor(bacteria, levels = c("Blank", "S. epidermidis", "S. hominis", "co-culture")))
+```
+
+
+## plot by bacteria, faceted by conditions 
+
+```{r}
+ggplot(tmp_summary,
+       #filter(!is.na(bacteria)), 
+       aes(x = Time, y = Mean_OD, group = group, color = bacteria)) +
+  geom_line(aes(color = bacteria)) +
+  geom_point(aes(color = bacteria)) +
+  geom_errorbar(aes(ymin = Mean_OD - SO_OD,
+                    ymax = Mean_OD + SO_OD), 
+                width = 0.2) +
+  facet_grid(~supp) +
+  labs(
+       x = "Time (hours)",
+       y = "Optical density (OD600)",
+       color = "Triplet ID") +
+  ggpubr::theme_pubr(legend = "bottom") +
+  theme(plot.title = element_text(hjust = 0.5), legend.title = element_blank()) -> p1
+p1
+```
+
+
+## plot by conditions, faceted by bacteria 
+
+```{r pressure, echo=FALSE}
+ggplot(tmp_summary,
+       aes(x = Time, y = Mean_OD, group = group, color = supp)) +
+  geom_line(aes(color = supp)) +
+  geom_point(aes(color = supp)) +
+  geom_errorbar(aes(ymin = Mean_OD - SO_OD,
+                    ymax = Mean_OD + SO_OD), 
+                width = 0.2) +
+  facet_grid(~bacteria) +
+  scale_color_manual(values = c( "lightblue", "blue", "orange", "red")) +
+  labs(
+    x = "Time (hours)",
+    y = "Optical density (OD600)",
+    color = "Triplet ID") +
+  ggpubr::theme_pubr(legend = "bottom") +
+  theme(plot.title = element_text(hjust = 0.5), legend.title = element_blank())
+```
+
+# PCR to quantify each species 
+```{r}
+pcr <- readxl::read_excel("~/ASMP_Dermotype/Data/5_experiment/SH-SE-galactose PCR reading .xlsx") %>%
+  filter(`Sample Name` != "NTC" & is.na(`Sample Name`) ==F) %>% 
+  mutate(type = case_when(str_detect(`Sample Name`, "C") ~ "stard_to_40ng", 
+                          T ~ "stard_to_1ul")) %>% 
+  mutate(culture = case_when(str_detect(`Sample Name`, "SE\\+SH") ~ "Co-culture", 
+                    T ~ "Mono-culture")) %>% 
+  mutate(
+    Group = if_else(type == "stard_to_1ul",
+                    str_sub(`Sample Name`, 1, -2),
+                    str_sub(`Sample Name`, 1, -3)),
+    Repeat = if_else(type == "stard_to_1ul",
+                     str_sub(`Sample Name`, -1, -1),
+                     str_sub(`Sample Name`, -2, -1))
+  ) 
+```
+
+
+
+```{r}
+df_coculture <-  pcr %>% 
+    mutate(supp = case_when(
+    str_detect(`Sample Name`, "GAL") ~ "BHI+galactose", 
+                T~ "BHI")) %>% 
+  filter(culture == "Co-culture" & type == "stard_to_1ul") %>% 
+  distinct(type, supp, Repeat,`Target Name`, `Quantity Mean`) %>% 
+  pivot_wider(
+    names_from = c("supp"), 
+    values_from = c("Quantity Mean"), 
+  ) %>% 
+  mutate( fc = `BHI+galactose`/BHI)
+
+  
+ggplot(df_coculture, aes(x = `Target Name`, y = fc, fill = `Target Name`)) +
+  geom_bar(stat = "summary", fun = "mean") +
+  geom_errorbar(stat = "summary", 
+                fun.data = mean_se, 
+                width = 0.2) +
+  ylab("Fold change in DNA copy number\n(BHI+galactose versus BHI)") +
+  xlab("") +
+  #facet_wrap(~type) +
+  scale_fill_manual(values = c("steelblue", "maroon"))+
+  ggpubr::theme_pubr() +
+  theme(axis.text.x = element_blank(), 
+        legend.title = element_blank(), 
+        legend.text = element_text(size = rel(1.2))) -> p2
+p2
+```
+
+
+

@@ -1,0 +1,8 @@
+"Site","Phenotype","Test","EffectSize","PValue","n_subj","Column_Category"
+"Ub","TEWL_cheek","Mann-Whitney / Kruskal-Wallis",-0.322121212121212,0.000637545882383002,175,"SkinPhysio"
+"Ax","Sebum_cheek","Mann-Whitney / Kruskal-Wallis",NA,0.00197534200746061,156,"SkinPhysio"
+"Vf","Sebum_cheek","Mann-Whitney / Kruskal-Wallis",-0.244076505852127,0.00757166930885259,175,"SkinPhysio"
+"Fo","TEWL_cheek","Mann-Whitney / Kruskal-Wallis",-0.256549232158988,0.0130207005190727,176,"SkinPhysio"
+"Ac","Sebum_cheek","Mann-Whitney / Kruskal-Wallis",-0.317473338802297,0.0138851672932589,182,"SkinPhysio"
+"Ps","TEWL_forearm","Mann-Whitney / Kruskal-Wallis",-0.316349206349206,0.00108481408799396,176,"SkinPhysio"
+"Ac","Surface_hydration_forearm","Mann-Whitney / Kruskal-Wallis",-0.277003007929997,0.0321392683325069,182,"SkinPhysio"

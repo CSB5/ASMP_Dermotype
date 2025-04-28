@@ -1,0 +1,203 @@
+---
+title: "FigS16_Histidine_Mluteus_assoc"
+author: "Li Chengchen (Cherry)"
+date: "2025-04-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+library(dplyr)
+library(reshape2)
+
+mat <- read.csv("~/ASMP_Dermotype/Data/3_pwy/Tax_profile_Ac_100ppl.csv", check.names = F)
+names(mat)[1] <- "LibraryID"
+mat <- mat %>% column_to_rownames("LibraryID")
+AA_dermo <- read.csv("~/ASMP_Dermotype/Data/3_pwy/Amino_acid_Ac_100ppl.csv", check.names = F) 
+v_list <- AA_dermo %>% 
+  dplyr::select(., matches("ug/ml|Ratio"), 
+                -contains("protein"), 
+                -contains("PCA"),  
+                -contains("His/Total UCA")) %>% 
+  names()
+AA_dermo_long <- AA_dermo |>
+  filter(Stability >=0.9) |>
+  dplyr::select(any_of(c("Dermotype_size", v_list))) |>
+  pivot_longer(cols = -Dermotype_size, 
+               names_to = "variable", 
+               values_to = "value") |>
+  mutate(variable = factor(variable, levels = c("Dermotype_size", v_list)))
+```
+
+## Compare between dermotypes 
+
+```{r}
+AA_dermo_long %>% filter(!str_detect(variable, "Ratio") &!str_detect(variable, "\\+")) %>% 
+ggplot(., aes(x = Dermotype_size, y = value, fill = Dermotype_size)) +
+  geom_boxplot(outlier.shape = NA) +  # Remove outliers from boxplot
+  geom_jitter(width = 0.2, height = 0, size = 1, alpha = 0.6) +  # Add jitter with customization
+  stat_pwc(method = "wilcox_test", 
+                             method.args = list(#alternative = "greater", 
+                                                p.adjust.method = "BH"), 
+                             label = "p.adj.signif", 
+                             color = "red", 
+                             vjust = 1)+  # Use Wilcoxon test for statistical comparison
+  theme_pubr(legend = "none")+  # Apply classic theme
+  facet_wrap(~ variable, scales = "free_y", nrow = 1,
+             labeller = label_wrap_gen(width = 20)) + # Create a panel of plots for each variable
+  labs(x = "", y = "") 
+```
+
+## amino acid and selected microbes' abundance 
+```{r}
+AA_dermo_mat <- mat |>
+  rownames_to_column("LibraryID") |>
+  dplyr::select(LibraryID, 
+         s__Micrococcus_luteus, 
+         s__Cutibacterium_acnes, 
+         s__Staphylococcus_hominis, 
+         s__Staphylococcus_epidermidis,
+         s__Cutibacterium_granulosum) |>
+  right_join(dplyr::select(AA_dermo, any_of(c("Dermotype_size", "LibraryID", v_list))), 
+             join_by("LibraryID"))
+
+AA_dermo_mat_long <- AA_dermo_mat |>
+  pivot_longer(cols = -c(LibraryID, Dermotype_size,   
+                         s__Micrococcus_luteus, 
+                         s__Cutibacterium_acnes, 
+                         s__Staphylococcus_hominis, 
+                         s__Staphylococcus_epidermidis,
+                         s__Cutibacterium_granulosum),
+               names_to = "variable", values_to = "value") |>
+  #mutate(variable = factor(variable, levels = c("Dermotype_size", v_list))) |>
+  mutate(variable2 =str_remove(variable, " - Abundance/\\(ug/ml\\)"))
+
+ggplot(AA_dermo_mat_long, 
+          aes(x =  s__Micrococcus_luteus, y = value, color = Dermotype_size)) +
+      geom_point() + 
+      scale_y_log10() +
+      scale_x_log10() +
+      geom_smooth(method = "lm",  aes(group = 1), color = "black") +
+      ggpubr::stat_cor(method = "spearman", aes(group = 1), color = "black")  +
+      theme_classic() +  # Apply classic theme
+      facet_wrap(~ variable2, scales = "free_y", nrow = 4) + # Create a panel of plots for each variable
+      labs(y = "", x = "M. luteus abundance") +
+      theme(strip.text.x = element_text(size = rel(1.2)),
+            legend.position = "top", 
+            legend.direction = "horizontal")
+```
+
+```{r}
+library(stringr)
+
+df_long <- AA_dermo_mat_long %>% 
+  pivot_longer(
+    cols = -c(LibraryID, Dermotype_size, variable2, variable, value),  
+    names_to = "species", 
+    values_to = "abundance")
+
+plot_list <- df_long %>%
+  split(.$species) %>%
+  lapply(function(df) {
+    
+    # Clean species label
+    cleaned_species <- df$species[1] %>%
+      str_remove("^s__") %>%
+      str_replace_all("_", " ") %>%
+      paste0("italic('", ., "')")
+
+    # Clean variable labels and compute group-specific min/max
+    df <- df %>%
+      mutate(variable = str_remove(variable, " - Abundance.*")) %>%
+            mutate(variable2 = factor(variable2, 
+                              levels = c(
+                               "L-Histidine",
+                               "trans-UCA",
+                               "cis-UCA",
+                               "PCA",
+                               "Total UCA",
+                               "Total  UCA+PCA",
+                               "His+Total  UCA",
+                               "His+Total  UCA+PCA",
+                               "trans-UCA/His Ratio",
+                               "cis-UCA/His Ratio",
+                               "Total UCA/His Ratio",
+                               "His/Total UCA Ratio",
+                               "cis-UCA/trans-UCA Ratio",
+                               "PCA/Total UCA Ratio",
+                               "PCA/trans-UCA Ratio",
+                               "PCA/cis-UCA Ratio",
+                               "PCA/His Ratio",
+                               "(Total UCA+PCA)/His Ratio",
+                               "(Total UCA+PCA)/(Total UCA+PCA +His) Ratio",
+                               "(Total UCA)/(Total UCA+PCA +His) Ratio",
+                               "(trans-UCA)/(Total UCA+PCA +His) Ratio",
+                               "(cis-UCA)/(Total UCA+PCA +His) Ratio",
+                               "PCA/(Total UCA+PCA +His) Ratio",
+                               "His/(Total UCA+PCA +His) Ratio"
+                               ))) %>%  
+      
+      #filter(str_detect(variable2, "Ratio")) %>%
+      group_by(variable2) %>%  # Group by facet variable
+      mutate(
+        min_abundance = min(abundance[abundance > 0], na.rm = TRUE),  # Group-specific x_min
+        max_value = max(value, na.rm = TRUE)                           # Group-specific y_max
+      ) %>%
+      ungroup()
+
+    
+    df %>% 
+      filter(variable2 == "His+Total  UCA") %>% 
+      ggplot(., aes(x = abundance, y = value)) +
+      geom_point(alpha = 0.6) + 
+      scale_x_log10() +
+      scale_y_log10() +
+      facet_wrap(#Dermotype_size
+                 ~ variable2, nrow = 2) +
+      geom_smooth(method = "lm", color = "blue") +
+      stat_cor(
+        method = "spearman",
+        color = "black",
+        #label.x = df$min_abundance,  # Use group-specific min (original scale)
+        #label.y = df$max_value,      # Use group-specific max (original scale)
+        hjust = -0.1,                # Adjust horizontal position
+        vjust = 1.5                  # Adjust vertical position
+      ) +
+      labs(y = "Amino acid abundance (ug/ml)", x = parse(text = cleaned_species)) +
+      ggpubr::theme_pubr(base_size = 12, border = T) +
+      theme(plot.title = element_blank())
+  })
+
+# Print each plot
+for (p in plot_list) print(p)
+```
+
+# amino acid & skin sensitivity 
+## (questionnaire data is accessible upon approval from HELIOS, hence not included here)
+
+```{r}
+mdata <- mdata %>% 
+  mutate(SubjectID = str_pad(SubjectID, width = 5, pad = "0"))
+         
+AA_dermo_pheno <- mdata.dermotype.conf |>
+  filter(Site == "Ac") |>
+  inner_join(AA_dermo, join_by("SubjectID")) %>% 
+  left_join(mdata, join_by(SubjectID))
+
+ggplot(AA_dermo_pheno, aes(x =Sensitive_skin_overall,
+                     y = `cis-UCA/trans-UCA Ratio`))+
+
+  geom_boxplot() +
+  geom_jitter() +
+  facet_wrap(~Dermotype_size.x) +
+  theme_pubr() +
+  geom_pwc(method = "wilcox_test", color = "red")
+
+```
+
+ˆ
