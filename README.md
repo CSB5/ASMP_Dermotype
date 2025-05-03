@@ -9,7 +9,8 @@ Scripts to generate figures for the manuscript titled "Large-scale skin metageno
   - [Supplementary Figure](Script/Supplementary%20Figure): code used to generate supplementary figure 
 
 [Data](./Data): input data used
-  - Large datasets and metabolomics data are available on [Figshare](https://figshare.com/projects/ASMP_Dermotype/243932).
+  - Shotgun metagenomic sequencing data is available from the European Nucleotide Archive (ENA) under project accession number PRJEB87291. 
+  - Other large datasets and metabolomics data are available on [Figshare](https://figshare.com/projects/ASMP_Dermotype/243932).
   - The authors of this study do not own the rights to the HELIOS dataset, and this dataset is under controlled access to ensure good data governance, responsible data use, and that the dataset is only used for the intended research purposes in compliance with HELIOS study cohort IRB and ethics approval. Access to individual level data for study participants should be submitted to the HELIOS Data Access Committee (email: helios_science@ntu.edu.sg).
 
 ## Contact 
