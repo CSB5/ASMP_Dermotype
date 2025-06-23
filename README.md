@@ -17,4 +17,4 @@ Scripts to generate figures for the manuscript titled "Large-scale skin metageno
 [Chengchen Li(Cherry)](mailto:cherry_li@gis.a-star.edu.sg), [Niranjan Nagarajan](mailto:nagarajann@gis.a-star.edu.sg)
 
 ## Citation
-The preprint is avaliable on [biorxiv](https://www.biorxiv.org/content/10.1101/2025.04.24.650393v1)
+The preprint is avaliable on [biorxiv](https://www.biorxiv.org/content/10.1101/2025.04.24.650393v2)
